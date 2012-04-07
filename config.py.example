@@ -1,0 +1,5 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+DEVICE = 'hpaio:/net/Officejet_4500_G510g-m?ip=192.168.178.100'
+DEFAULT_LANGUAGE = 'deu'
