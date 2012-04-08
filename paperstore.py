@@ -99,6 +99,7 @@ def do_scan():
 
 
 def add(path_text, path_pdf, path_preview, tags=None):
+    create_index()
     with open(path_text, 'r') as ftxt:
         content = ftxt.read().decode('utf-8')
 
@@ -164,6 +165,7 @@ def preview(year, month, filename):
                        'image/tiff')
 
 
+@command
 def create_index():
     if not os.path.exists(path_index):
         os.mkdir(path_index)
@@ -180,7 +182,7 @@ def runserver():
 
 def main():
     p = ArghParser()
-    p.add_commands([scan, runserver])
+    p.add_commands([scan, runserver, create_index])
     p.dispatch()
 
 
