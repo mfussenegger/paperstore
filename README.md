@@ -7,9 +7,12 @@ Paperstore is a little python script to scan and index documents
 
     ./paperstore.py scan --tags=sometag
 
-or
+or if you want to search scanned documents:
 
     ./paperstore.py runserver
+
+This will start a webserver and point your browser to http://localhost:8080/.
+There you'll be provided with a search form.
 
 ## Requirements
 
