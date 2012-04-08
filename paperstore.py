@@ -32,9 +32,9 @@ schema = Schema(content=TEXT,
 
 
 @command
-def scan(tags=None):
+def scan(tags=None, lang=None):
     do_scan()
-    create_tiff_and_txt()
+    create_tiff_and_txt(lang)
     merge_tiff_and_txt()
 
     tags = unicode(tags, encoding='utf-8', errors='ignore'),
@@ -58,9 +58,12 @@ def merge_tiff_and_txt():
     os.remove('content.tiff')
 
 
-def create_tiff_and_txt():
+def create_tiff_and_txt(language):
     pnms = [f for f in os.listdir(os.curdir) if f.endswith('.pnm')]
-    print(pnms)
+
+    if not language:
+        language = DEFAULT_LANGUAGE
+
     for pnm in sorted(pnms):
         unpapered = '_' + pnm
         call(['unpaper', pnm, unpapered])
@@ -75,7 +78,7 @@ def create_tiff_and_txt():
                   tiff,
                   tiff.replace('.tiff', ''),
                   '-l',
-                  DEFAULT_LANGUAGE])
+                  language])
 
 
 def do_scan():
