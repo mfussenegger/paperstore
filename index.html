@@ -29,7 +29,7 @@
               <a href="file://{{ result['path'] }}">{{ result.tags }}</a>
             </td>
             <td>
-              <img src="{{ result['preview'] }}" />
+              <img src="http://localhost:4200/_blobs/docs/{{ result['preview'] }}" />
             </td>
           </tr>
         {% endfor %}

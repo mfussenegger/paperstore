@@ -8,11 +8,18 @@ requirements = [
     'bottle',
     'sh',
     'argh',
-    'whoosh'
+    'sqlalchemy',
+    'crate',
+    'jinja2'
 ]
 
 
 setup(
     install_requires=requirements,
-    name='paperstore'
+    name='paperstore',
+    entry_points={
+        'console_scripts': [
+            'paperstore = paperstore:main'
+        ]
+    }
 )

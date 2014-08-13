@@ -2,75 +2,94 @@
 # -*- coding: utf-8 -*-
 
 import os
-import hashlib
+import sys
 import webbrowser
+import argh
+
 from sh import (
     scanimage,
     convert,
     unpaper,
     tesseract,
-    tiffcp,
-    tiff2pdf
+    tiffcp
 )
-from argh import command, ArghParser
 
-from datetime import datetime
+from time import time
+from uuid import uuid4
 
 from bottle import route, run, post, request, static_file
 from bottle import jinja2_template as template
 
-from config import DEVICE, DEFAULT_LANGUAGE
-
-import whoosh.index as index
-from whoosh.fields import Schema, TEXT, ID, KEYWORD, DATETIME
-from whoosh.index import create_in, open_dir
-from whoosh.qparser import QueryParser
+from config import DEVICE, DEFAULT_LANGUAGE, CRATE_HOSTS
+from crate.client import connect
 
 
-path_archive = os.path.join(os.path.dirname(__file__), 'archive')
-path_index = os.path.join(path_archive, 'index')
-schema = Schema(content=TEXT,
-                tags=KEYWORD(stored=True,
-                             lowercase=True,
-                             commas=True,
-                             scorable=True),
-                path=ID(stored=True),
-                date=DATETIME(stored=True))
+connection = connect(CRATE_HOSTS)
+cursor = connection.cursor()
+blobs = connection.get_blob_container('docs')
+
+INSERT_STMT = '''\
+insert into docs (id, content, tags, preview_hash, pdf_hash, ts)
+    values (?, ?, ?, ?, ?, ?)
+'''
+
+def mktime():
+    return int(time() * 1000)
 
 
-@command
+@argh.arg('--tags', nargs='+')
 def scan(tags=None, lang=None):
-    do_scan()
-    create_tiff_and_txt(lang)
-    merge_tiff_and_txt()
+    pnms = do_scan()
+    tiffs, textfiles = create_tiff_and_txt(pnms, lang)
+    fp, content = merge_textfiles(textfiles)
+    tiff = merge_tiffs(tiffs)
+    pdf = tiff_to_pdf(tiff)
 
-    tags = unicode(tags, encoding='utf-8', errors='ignore'),
-    add('content.txt', 'content.pdf', 'preview.tiff', tags)
+    pdf_hash = blobs.put(open(pdf, 'rb'))
+    preview_hash = blobs.put(open('preview.jpg', 'rb'))
+    cursor.execute(INSERT_STMT, (
+        str(uuid4()), content, tags, preview_hash, pdf_hash, mktime()))
 
 
-def merge_tiff_and_txt():
+def merge_textfiles(textfiles):
+    content = []
     with open('content.txt', 'w') as fout:
-        for f in os.listdir(os.curdir):
-            if f.startswith('_out') and f.endswith('.txt'):
-                with open(f, 'r') as fin:
-                    fout.write(fin.read())
-                os.remove(f)
-
-    tiffcp('-c lzw *.tiff content.tiff')
-    tiff2pdf('content.tiff', _out='content.pdf')
-    os.rename('_out1.tiff', 'preview.tiff')
-    for f in os.listdir(os.curdir):
-        if f.startswith('_out') and f.endswith('.tiff'):
+        for f in textfiles:
+            with open(f, 'r') as fin:
+                tmp = fin.read()
+                content.append(tmp)
+                fout.write(tmp)
             os.remove(f)
+    return 'content.txt', '\n'.join(content)
+
+
+def merge_tiffs(tiffs):
+    tiffs = tiffs or [f for f in os.listdir(os.curdir)
+                      if f.startswith('_out') and f.endswith('.tiff')]
+    if not tiffs:
+        sys.exit('No tiff files found')
+    tiffcp(tiffs, 'content.tiff')
+    convert(tiffs[0], 'preview.jpg')
+    for tiff in tiffs[1:]:
+        os.remove(tiff)
+    return 'content.tiff'
+
+
+def tiff_to_pdf(tiff):
+    convert(
+        '-compress', 'JPEG',
+        '-page', 'A4',
+        tiff,
+        'content.pdf'
+    )
     os.remove('content.tiff')
+    return 'content.pdf'
 
 
-def create_tiff_and_txt(language):
-    pnms = [f for f in os.listdir(os.curdir) if f.endswith('.pnm')]
-
-    if not language:
-        language = DEFAULT_LANGUAGE
-
+def create_tiff_and_txt(pnms, language):
+    language = language or DEFAULT_LANGUAGE
+    tiffs = []
+    texts = []
     for pnm in sorted(pnms):
         unpapered = '_' + pnm
         unpaper(pnm, unpapered)
@@ -81,55 +100,27 @@ def create_tiff_and_txt(language):
         convert(unpapered, tiff)
         if os.path.exists(tiff):
             os.remove(unpapered)
-            tesseract(
-                tiff,
-                tiff.replace('.tiff', ''),
-                '-l',
-                language)
+            txtfile = tiff.replace('.tiff', '')
+            tiffs.append(tiff)
+            texts.append(txtfile + '.txt')
+            tesseract(tiff, txtfile, '-l', language)
+    return tiffs, texts
 
 
-def do_scan(scancmd=scanimage):
-    scanimage('--device',
-              DEVICE,
-              '--format=pnm',
-              '--resolution 300',
-              '-x 210 -y 297',
-              '--batch',
-              '--source ADF')
-
-
-def add(path_text, path_pdf, path_preview, tags=None):
-    create_index()
-    with open(path_text, 'r') as ftxt:
-        content = ftxt.read().decode('utf-8')
-
-    with open(path_pdf, 'rb') as fpdf:
-        pdf = fpdf.read()
-        hashvalue = hashlib.sha1(pdf).hexdigest()
-
-    dt = datetime.now()
-    dir = os.path.join(path_archive, '{0:%Y/%m}/'.format(dt))
-    pdf = os.path.abspath(
-        os.path.join(path_archive,
-                     '{0:%Y/%m}/{1}.pdf'.format(dt, hashvalue)))
-    preview = os.path.abspath(
-        os.path.join(path_archive,
-                     '{0:%Y/%m}/{1}_preview.png'.format(dt, hashvalue)))
-
-    ix = open_dir(path_index)
-    writer = ix.writer()
-    writer.add_document(content=content,
-                        tags=tags,
-                        path=unicode(pdf),
-                        date=dt)
-    writer.commit()
-
-    if not os.path.exists(dir):
-        os.makedirs(dir)
-    os.rename(path_pdf, pdf)
-    convert('-resize 200x', path_preview, preview)
-    os.remove(path_preview)
-    os.remove(path_text)
+def do_scan():
+    scanimage(
+        '--device',
+        DEVICE,
+        '--format=pnm',
+        '--resolution', 300,
+        '-x', 210,
+        '-y', 297,
+        '--batch',
+        '--source', 'ADF',
+        _ok_code=[0, 7]
+    )
+    pnms = [f for f in os.listdir(os.curdir) if f.endswith('.pnm')]
+    return pnms
 
 
 @route('/')
@@ -143,20 +134,17 @@ def search_submit():
     if not term:
         return template('index', term='')
 
-    ix = open_dir(path_index)
-    with ix.searcher() as searcher:
-        parser = QueryParser("content", ix.schema)
-        query = parser.parse(unicode(term))
-        results = searcher.search(query)
-        results = [{
-            'tags': r.get('tags'),
-            'date': r['date'],
-            'path': r['path'],
-            'preview': '/preview/{0:%Y/%m}/{1}_preview.png'.format(
-                r['date'],
-                os.path.basename(r['path']).replace('.pdf', ''))
-        } for r in results]
-    return template('index', results=results, term=term)
+    stmt = 'select content, preview_hash, pdf_hash, tags, ts from docs \
+        where match (content, ?) limit 20'
+    cursor.execute(stmt, (term, ))
+    rows = cursor.fetchall()
+    rows = [{
+        'tags': r[3],
+        'date': r[4],
+        'preview': r[1],
+        'pdf': r[2],
+        'content': r[0]} for r in rows]
+    return template('index', results=rows, term=term)
 
 
 @route('/preview/<year>/<month>/<filename>')
@@ -166,25 +154,15 @@ def preview(year, month, filename):
                        'image/tiff')
 
 
-@command
-def create_index():
-    if not os.path.exists(path_index):
-        os.mkdir(path_index)
-
-    if not index.exists_in(path_index):
-        create_in(path_index, schema)
-
-
-@command
 def runserver():
     webbrowser.open_new_tab('http://localhost:8080/')
     run(host='localhost', port=8080, reloader=True)
 
 
 def main():
-    p = ArghParser()
-    p.add_commands([scan, runserver, create_index])
-    p.dispatch()
+    parser = argh.ArghParser()
+    parser.add_commands([scan, runserver])
+    parser.dispatch()
 
 
 if __name__ == '__main__':
