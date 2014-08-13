@@ -4,6 +4,14 @@
 import os
 import hashlib
 import webbrowser
+from sh import (
+    scanimage,
+    convert,
+    unpaper,
+    tesseract,
+    tiffcp,
+    tiff2pdf
+)
 from argh import command, ArghParser
 
 from datetime import datetime
@@ -11,7 +19,6 @@ from datetime import datetime
 from bottle import route, run, post, request, static_file
 from bottle import jinja2_template as template
 
-from subprocess import Popen, call
 from config import DEVICE, DEFAULT_LANGUAGE
 
 import whoosh.index as index
@@ -23,12 +30,12 @@ from whoosh.qparser import QueryParser
 path_archive = os.path.join(os.path.dirname(__file__), 'archive')
 path_index = os.path.join(path_archive, 'index')
 schema = Schema(content=TEXT,
-               tags=KEYWORD(stored=True,
-                            lowercase=True,
-                            commas=True,
-                            scorable=True),
-               path=ID(stored=True),
-               date=DATETIME(stored=True))
+                tags=KEYWORD(stored=True,
+                             lowercase=True,
+                             commas=True,
+                             scorable=True),
+                path=ID(stored=True),
+                date=DATETIME(stored=True))
 
 
 @command
@@ -49,8 +56,8 @@ def merge_tiff_and_txt():
                     fout.write(fin.read())
                 os.remove(f)
 
-    call('tiffcp -c lzw *.tiff content.tiff', shell=True)
-    call('tiff2pdf content.tiff > content.pdf', shell=True)
+    tiffcp('-c lzw *.tiff content.tiff')
+    tiff2pdf('content.tiff', _out='content.pdf')
     os.rename('_out1.tiff', 'preview.tiff')
     for f in os.listdir(os.curdir):
         if f.startswith('_out') and f.endswith('.tiff'):
@@ -66,36 +73,29 @@ def create_tiff_and_txt(language):
 
     for pnm in sorted(pnms):
         unpapered = '_' + pnm
-        call(['unpaper', pnm, unpapered])
+        unpaper(pnm, unpapered)
         if os.path.exists(unpapered):
             os.remove(pnm)
 
         tiff = unpapered.replace('.pnm', '.tiff')
-        call(['convert', unpapered, tiff])
+        convert(unpapered, tiff)
         if os.path.exists(tiff):
             os.remove(unpapered)
-            call(['tesseract',
-                  tiff,
-                  tiff.replace('.tiff', ''),
-                  '-l',
-                  language])
+            tesseract(
+                tiff,
+                tiff.replace('.tiff', ''),
+                '-l',
+                language)
 
 
-def do_scan():
-    p = Popen(['scanimage',
-               '--device',
-               DEVICE,
-               '--format=pnm',
-               '--resolution',
-               '300',
-               '-x',
-               '210',
-               '-y',
-               '297',
-               '--batch',
-               '--source',
-               'ADF'])
-    p.wait()
+def do_scan(scancmd=scanimage):
+    scanimage('--device',
+              DEVICE,
+              '--format=pnm',
+              '--resolution 300',
+              '-x 210 -y 297',
+              '--batch',
+              '--source ADF')
 
 
 def add(path_text, path_pdf, path_preview, tags=None):
@@ -109,11 +109,12 @@ def add(path_text, path_pdf, path_preview, tags=None):
 
     dt = datetime.now()
     dir = os.path.join(path_archive, '{0:%Y/%m}/'.format(dt))
-    pdf = os.path.abspath(os.path.join(path_archive,
-                        '{0:%Y/%m}/{1}.pdf'.format(dt, hashvalue)))
-    preview = os.path.abspath(os.path.join(path_archive,
-                        '{0:%Y/%m}/{1}_preview.png'.format(dt,
-                                                            hashvalue)))
+    pdf = os.path.abspath(
+        os.path.join(path_archive,
+                     '{0:%Y/%m}/{1}.pdf'.format(dt, hashvalue)))
+    preview = os.path.abspath(
+        os.path.join(path_archive,
+                     '{0:%Y/%m}/{1}_preview.png'.format(dt, hashvalue)))
 
     ix = open_dir(path_index)
     writer = ix.writer()
@@ -126,7 +127,7 @@ def add(path_text, path_pdf, path_preview, tags=None):
     if not os.path.exists(dir):
         os.makedirs(dir)
     os.rename(path_pdf, pdf)
-    call(['convert', '-resize', '200x', path_preview, preview])
+    convert('-resize 200x', path_preview, preview)
     os.remove(path_preview)
     os.remove(path_text)
 
