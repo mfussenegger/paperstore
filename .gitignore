@@ -1,3 +1,9 @@
 *.pyc
 archive/*
 config.py
+.installed.cfg
+.venv/
+bin/
+develop-eggs/
+paperstore.egg-info/
+parts/
