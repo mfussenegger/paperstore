@@ -27,6 +27,9 @@ There you'll be provided with a search form.
 ### Python
 
 * python 2.7
-* whoosh
 * argh
 * bottle
+
+### Other
+
+* crate
